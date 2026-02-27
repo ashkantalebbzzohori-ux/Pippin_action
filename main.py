@@ -106,13 +106,22 @@ def load_cex_wallets_to_db(db: Session):
             return 0
             
         df = pd.read_csv(CSV_FILE)
+        
+        # --- اصلاح مهم: استفاده از نام ستون‌های صحیح (address به جای wallet) ---
+        # بررسی اینکه آیا فایل CSV ستون‌های درست را دارد یا خیر
+        if 'address' not in df.columns or 'exchange_name' not in df.columns:
+            logger.error(f"❌ CSV format error! Columns found: {df.columns}. Expected: 'address', 'exchange_name'")
+            return 0
+
         # فیلتر فقط Solana (آدرس‌های Solana معمولاً 32-44 کاراکتر و base58 هستند)
-        df_sol = df[df['wallet'].str.len() >= 32]
+        # اصلاح: استفاده از df['address']
+        df_sol = df[df['address'].str.len() >= 32]
         
         count = 0
         for _, row in df_sol.iterrows():
-            wallet_str = str(row['wallet']).strip()
-            label_str = str(row['label']).strip()
+            # اصلاح: استفاده از نام ستون‌های فایل CSV
+            wallet_str = str(row['address']).strip()        # تغییر از row['wallet']
+            label_str = str(row['exchange_name']).strip()   # تغییر از row['label']
             
             # چک کردن اینکه قبلاً وجود داره یا نه
             exists = db.query(CEXWallet).filter(CEXWallet.wallet == wallet_str).first()
@@ -126,6 +135,8 @@ def load_cex_wallets_to_db(db: Session):
         return count
     except Exception as e:
         logger.error(f"❌ Error loading CEX wallets: {e}")
+        # نمایش جزئیات بیشتر برای دیباگ
+        logger.error(traceback.format_exc())
         db.rollback()
         return 0
 
@@ -134,7 +145,7 @@ def get_cex_wallets_dict(db: Session) -> Dict[str, str]:
     wallets = db.query(CEXWallet).all()
     return {w.wallet: w.label for w in wallets}
 
-# ==================== Webhook Processing (اصلاح شده) ====================
+# ==================== Webhook Processing ====================
 def process_helius_webhook(payload: Union[dict, list], db: Session):
     """پردازش داده‌های Helius با آپدیت Real-time Netflow"""
     
@@ -212,9 +223,6 @@ def process_helius_webhook(payload: Union[dict, list], db: Session):
                     tx_type = "inflow"   # ورود به CEX
                 elif cex_from and cex_to:
                     tx_type = "internal"  # جابجایی داخلی بین CEXها
-                else:
-                    # این لاگ کمک می‌کند متوجه شویم تراکنش‌های کاربر-به-کاربر در حال رخ دادن است
-                    logger.debug(f"ℹ️ PIPPIN tx ignored (Not a CEX transfer): {from_addr} -> {to_addr}")
                 
                 if tx_type:
                     # چک کردن duplicate بودن تراکنش
@@ -243,7 +251,6 @@ def process_helius_webhook(payload: Union[dict, list], db: Session):
                             NetflowHourly.bucket_time == bucket_dt
                         ).first()
                         
-                        # 🚨 رفع باگ اصلی: مقداردهی اولیه صریح برای جلوگیری از خطای NoneType 🚨
                         if not netflow_record:
                             netflow_record = NetflowHourly(
                                 bucket_time=bucket_dt,
@@ -270,7 +277,7 @@ def process_helius_webhook(payload: Union[dict, list], db: Session):
         except Exception as e:
             sig_str = tx.get('signature', 'unknown') if isinstance(tx, dict) else 'unknown'
             logger.error(f"❌ Error processing tx {sig_str}: {e}")
-            logger.error(traceback.format_exc()) # نمایش دقیق خطای کد
+            logger.error(traceback.format_exc()) 
             continue
     
     # کامیت نهایی به دیتابیس
